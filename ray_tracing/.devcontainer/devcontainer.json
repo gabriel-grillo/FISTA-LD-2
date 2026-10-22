@@ -1,0 +1,23 @@
+{
+    "name": "Ray Tracing",
+    "image": "ray_tracing",
+    "runArgs": [
+    	"--rm",
+    	"-it",
+        "--gpus=all",
+        "--cap-add=SYS_ADMIN",
+        "--security-opt", "seccomp=unconfined",
+        "-v", ".:/app"
+    ],
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.cpptools",
+                "ms-python.python",
+                "nvidia.nsight-vscode-edition",
+                "ms-toolsai.jupyter"
+            ]
+        }
+    },
+    "remoteUser": "root"
+}
