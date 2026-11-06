@@ -1,5 +1,6 @@
 import tensorflow as tf
 from proxTV import proxTV, reduce_TV
+from math import inf
 
 #############################
 # Optimize F(x) = f(x) + g(x)
@@ -54,6 +55,9 @@ def objective_function( problem, A, A_adj, A_norm, b, W, W_adj, W_norm, lam ):
         def prox( inp, step_size, eps ):
             out = tf.math.maximum( 0.0, inp )
             return out, tf.fill( [tf.shape(inp)[0]], 1 ), tf.fill( [tf.shape(inp)[0]], 1 )
+        def proj_C( inp ):
+            out = tf.math.maximum( 0.0, inp )
+            return out
     elif problem == 'lasso':
         # Lasso problem: W-l1 regularized least squares problem
         def f( x ):
@@ -66,6 +70,8 @@ def objective_function( problem, A, A_adj, A_norm, b, W, W_adj, W_norm, lam ):
             return l1( lam * W(x) )
         def prox(x, rho, eps):
             return W_adj( prox_l1( W(x), lam * rho ) ), tf.fill( [tf.shape(x)[0]], 1 ), tf.fill( [tf.shape(x)[0]], 1 )
+        def proj_C( inp ):
+            return inp
     elif problem == 'slasso':
         # Smoothed Lasso problem: W-l1 (smoothed) regularized least squares problem
         huber_param = tf.constant( 1e-2, dtype = tf.float32, name = 'huber_param' )
@@ -80,6 +86,8 @@ def objective_function( problem, A, A_adj, A_norm, b, W, W_adj, W_norm, lam ):
             return 0.0
         def prox( x, rho, eps):
             return x, tf.fill( [tf.shape(x)[0]], 1 ), tf.fill( [tf.shape(x)[0]], 1 )
+        def proj_C( inp ):
+            return inp
     elif problem == 'nnslasso':
         # Nonnegative smoothed Lasso problem: W-l1 (smoothed) regularized least squares problem
         huber_param = tf.constant( 1e-2, dtype = tf.float32, name = 'huber_param' )
@@ -95,7 +103,12 @@ def objective_function( problem, A, A_adj, A_norm, b, W, W_adj, W_norm, lam ):
         def prox( inp, step_size, eps ):
             out = tf.math.maximum( 0.0, inp )
             return out, tf.fill( [tf.shape(inp)[0]], 1 ), tf.fill( [tf.shape(inp)[0]], 1 )
+        def proj_C( inp ):
+            out = tf.math.maximum( 0.0, inp )
+            return out
     elif problem == 'lstv':
+        lower = -inf
+        upper = + inf
         def f( x ):
             r = A( x ) - b
             def grad():
@@ -104,17 +117,23 @@ def objective_function( problem, A, A_adj, A_norm, b, W, W_adj, W_norm, lam ):
         L = A_norm**2
         def g( x ):
             return lam * reduce_TV( W( x ) )
-        prox = proxTV( W, W_adj, W_norm, lam )
+        prox = proxTV( W, W_adj, W_norm, lam, lower = lower, upper = upper, MAXITER = 10 )
+        def proj_C( x ):
+            if lower > -inf:
+                x = tf.math.maximum( x, lower )
+            if upper < inf:
+                x = tf.math.minimum( x, upper )
+            return x
     else:
         raise ValueError('Unimplemented problem')
 
-    return f, g, prox, L
+    return f, g, prox, proj_C, L
 
 
 ################# Computing R0 for fista_ld
 def computeR( problem, x0, A, A_adj, A_norm, b, W, W_adj, W_norm, lam ):
     # Objective funtion terms
-    f, g, prox, L = objective_function( problem, A, A_adj, A_norm, b, W, W_adj, W_norm, lam )
+    f, _, prox, _, L = objective_function( problem, A, A_adj, A_norm, b, W, W_adj, W_norm, lam )
     # Performing one proximal gradient step with loose proximal tolerance
     _, gradx = f( x0 )
     grad = gradx()
@@ -126,7 +145,7 @@ def computeR( problem, x0, A, A_adj, A_norm, b, W, W_adj, W_norm, lam ):
 
 ########################## FISTA with Learned Deviations ##########################
 def fista_ld( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
-              d_model, e_model, v_model, rho,
+              d_model, e_model, v_model, theta,
               MAXITER, MAXITER_DEVS, gamma, alpha, mu = 0.99,
               training = False, save_hist = True
              ):
@@ -135,7 +154,15 @@ def fista_ld( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
     batch_size = tf.shape(x)[0]
     
     ## Objective funtion terms
-    f, g, prox, L = objective_function( problem, A, A_adj, A_norm, b, W, W_adj, W_norm, lam )
+    f, g, prox, proj_C, L = objective_function( problem, A, A_adj, A_norm, b, W, W_adj, W_norm, lam )
+
+    ## Stepsize limits
+    c_min = 0.1
+    c_max = 10.0
+    theta_center = tf.math.log( ( c_max - 1 ) / ( 1 - c_min ) )
+    rho_theory = mu / L
+    rho_min = c_min * rho_theory
+    rho_max = c_max * rho_theory
     
     ## Initializations
     i = tf.constant(0, dtype=tf.int32, name = 'i')
@@ -183,9 +210,9 @@ def fista_ld( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
 
         ## Current rho
         if tf.less_equal( i, MAXITER_DEVS ):
-            current_rho = rho[i-1]
+            current_rho = rho_min + (rho_max - rho_min) * tf.math.sigmoid( theta[i-1] - theta_center )
         else:
-            current_rho = mu / L
+            current_rho = rho_theory
 
         ## y update
         y = ( 1 - 1 / t ) * x + ( 1 / t ) * z
@@ -206,13 +233,13 @@ def fista_ld( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
             d = tf.zeros_like( x )
 
         # Gradient step with deviation
+        grad += d
         grad *= current_rho
         y -= grad
-        y += d
 
         # Proximal step
         eps = R0 / tf.cast( i, dtype = tf.float32 ) ** gamma
-        eps /= current_rho * t ** 2
+        eps /= t ** 2
         x, flag, inner_iter = prox( y, current_rho, eps )
 
         # e deviation
@@ -225,6 +252,7 @@ def fista_ld( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
             e = tf.zeros_like(x)
         # Adding e deviation
         x += e
+        x = proj_C( x )
 
         ## z update
         if tf.less( i, MAXITER ):
@@ -236,16 +264,16 @@ def fista_ld( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
             else:
                 v = tf.zeros_like(x)
             # Inertial step with deviation
-            z = x + ( t - 1 ) * ( x - x_prev ) + v
+            z = proj_C( x + ( t - 1 ) * ( x - x_prev ) + v )
         else:
             v = tf.zeros_like(x)
             v_norm_upper_bound = 0.0 * R0
 
         ## t update
         if tf.less( i, MAXITER_DEVS ):
-            next_rho = rho[i]
+            next_rho = rho_min + (rho_max - rho_min) * tf.math.sigmoid( theta[i] - theta_center )
         else:
-            next_rho = mu / L
+            next_rho = rho_theory
         t = tf.math.maximum( 1.0, ( 1 - alpha ) / 2 + tf.sqrt( current_rho / next_rho ) * t )
         
         ## Saves history
@@ -280,7 +308,7 @@ def fista( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
     batch_size = tf.shape(x)[0]
     
     ## Objective funtion terms
-    f, g, prox, L = objective_function( problem, A, A_adj, A_norm, b, W, W_adj, W_norm, lam )
+    f, g, prox, proj_C, L = objective_function( problem, A, A_adj, A_norm, b, W, W_adj, W_norm, lam )
     
     ## Initializations
     i = tf.constant(0, dtype=tf.int32, name = 'i')
@@ -328,12 +356,12 @@ def fista( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
 
         # Proximal step
         eps = R0 / tf.cast( i, dtype = tf.float32 ) ** gamma
-        eps /= rho * t ** 2
+        eps /= t ** 2
         x, flag, inner_iter = prox( w, rho, eps )
 
         ## z update
         # Inertial step
-        z = x + ( t - 1 ) * ( x - x_prev )
+        z = proj_C( x + ( t - 1 ) * ( x - x_prev ) )
 
         ## t update (constant step-size)
         t += (1-alpha)/2
@@ -360,7 +388,7 @@ def ista( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
     batch_size = tf.shape(x)[0]
     
     # Objective funtion terms
-    f, g, prox, L = objective_function( problem, A, A_adj, A_norm, b, W, W_adj, W_norm, lam )
+    f, g, prox, _, L = objective_function( problem, A, A_adj, A_norm, b, W, W_adj, W_norm, lam )
 
     # Initializations
     i = tf.constant(0, dtype=tf.int32, name = 'i')
@@ -412,13 +440,13 @@ def ista( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
 ########################## Deep Optimization ##########################
 ##### based on implementations at https://github.com/JevgenijaAksjonova/Deep-Optimization
 def deepopt_nonsmooth( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
-                       dx1_model, dx2_model, rho, MAXITER, MAXITER_DEVS, alpha,
+                       dx1_model, dx2_model, theta, MAXITER, MAXITER_DEVS, alpha,
                        training = False, save_hist = True ):
     # axis=0(batch), axes=1,2(2d image), axis=3(channels)
     batch_size = tf.shape(x)[0]
     
     # Objective funtion terms
-    f, g, prox, L = objective_function( problem, A, A_adj, A_norm, b, W, W_adj, W_norm, lam )
+    f, g, prox, _, L = objective_function( problem, A, A_adj, A_norm, b, W, W_adj, W_norm, lam )
 
     # Initializations
     i = tf.constant(0, dtype=tf.int32, name = 'i')
@@ -430,6 +458,14 @@ def deepopt_nonsmooth( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
     beta = 1/L    # Inverse of the smoothness parameter
     gamma = beta  # step-size
     omega = alpha # alpha_2
+
+    ## Stepsize limits
+    c_min = 0.1
+    c_max = 2.0
+    theta_center = tf.math.log( ( c_max - 1 ) / ( 1 - c_min ) )
+    gamma_min = c_min * beta
+    gamma_max = c_max * beta # gamma in (0,2beta)
+
     if save_hist:
         Fhist           = tf.fill( [ batch_size, MAXITER + 1 ], 0.0, name = 'Fhist'           )
         dx1_hist        = tf.fill( [ batch_size, MAXITER     ], 0.0, name = 'dx1_hist'        )
@@ -453,7 +489,7 @@ def deepopt_nonsmooth( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
     while tf.less(i, MAXITER):
         ## Step-size
         if tf.less(i, MAXITER_DEVS):
-            gamma = tf.math.minimum( rho[i], 2 * beta - 1e-3) # gamma in (0,2beta)
+            gamma = gamma_min + (gamma_max - gamma_min) * tf.math.sigmoid( theta[i] - theta_center )
         else:
             gamma = beta
         ## Deviations

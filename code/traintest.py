@@ -222,7 +222,7 @@ def train_fista_ld( dataset, problem, miniter, maxiter, gamma, alpha,
         v_model      = network_base_arch( v_input_list, "v_model" )
     v_model.summary()
     ##### TRAINABLE STEPSIZES
-    log_rho = tf.Variable( initial_value = tf.zeros(maxiter), dtype = tf.float32, trainable = True, name='log_rho' )
+    theta = tf.Variable( initial_value = tf.zeros(maxiter), dtype = tf.float32, trainable = True, name='theta' )
     ##### SAVING INITIALIZED MODELS
     def save_weights(epoch):
         path_epoch = os.path.join( MODEL_PATH, f'epoch_{epoch}')
@@ -231,7 +231,7 @@ def train_fista_ld( dataset, problem, miniter, maxiter, gamma, alpha,
         d_model.save( os.path.join( path_epoch, 'd_model.keras' ) )
         e_model.save( os.path.join( path_epoch, 'e_model.keras' ) )
         v_model.save( os.path.join( path_epoch, 'v_model.keras' ) )
-        np.save( os.path.join( path_epoch, 'rho.npy' ), tf.exp( log_rho ).numpy() )
+        np.save( os.path.join( path_epoch, 'theta.npy' ), theta.numpy() )
     # Always saves the initialized model
     if not load_saved_models:
         save_weights(0)
@@ -251,17 +251,15 @@ def train_fista_ld( dataset, problem, miniter, maxiter, gamma, alpha,
             n_iter_train = tf.random.uniform( shape = [],  minval = miniter, maxval = maxiter + 1, \
                                               dtype = tf.int32, name = 'maxiter', seed = RANDOM_SEED )
         with tf.GradientTape() as tape:
-            # Stepsize
-            rho = tf.exp( log_rho )
             _, F, _ = fista_ld( problem, x0_train, A, A_adj, A_norm, b_train, W, W_adj, W_norm, lam,
-                                d_model, e_model, v_model, rho,
+                                d_model, e_model, v_model, theta,
                                 n_iter_train, n_iter_train, gamma, alpha,
                                 training = True, save_hist = False
                                 )
             loss = tf.reduce_mean( ( F - F_ref[:,-1] ) / ( F_ref[:,n_iter_train] - F_ref[:,-1] ) )
             reg_loss = tf.add_n( d_model.losses + e_model.losses + v_model.losses )
             total_loss = loss + reg_loss
-        variables = d_model.trainable_variables + e_model.trainable_variables + v_model.trainable_variables + [ log_rho ]
+        variables = d_model.trainable_variables + e_model.trainable_variables + v_model.trainable_variables + [ theta ]
         grads = tape.gradient( total_loss, variables )
         optimizer.apply_gradients( zip( grads, variables ) )
         return loss
@@ -311,14 +309,14 @@ def train_deepopt( dataset, problem, miniter, maxiter, alpha,
         dx2_model      = network_base_arch( dx2_input_list, name = "dx2_model" )
     dx2_model.summary()
     ##### TRAINABLE STEPSIZES
-    log_rho = tf.Variable( initial_value = tf.zeros(maxiter), dtype = tf.float32, trainable = True, name='log_rho' )
+    theta = tf.Variable( initial_value = tf.zeros(maxiter), dtype = tf.float32, trainable = True, name='theta' )
     ##### SAVING INITIALIZED MODELS
     def save_weights(epoch):
         if not os.path.exists( os.path.join( MODEL_PATH, f'epoch_{epoch}') ):
             os.makedirs( os.path.join( MODEL_PATH, f'epoch_{epoch}') )
         dx1_model.save( os.path.join( MODEL_PATH, f'epoch_{epoch}', 'dx1.keras' ) )
         dx2_model.save( os.path.join( MODEL_PATH, f'epoch_{epoch}', 'dx2.keras' ) )
-        np.save( os.path.join( MODEL_PATH, f'epoch_{epoch}', 'rho.npy' ), tf.exp( log_rho ).numpy() )
+        np.save( os.path.join( MODEL_PATH, f'epoch_{epoch}', 'theta.npy' ), theta.numpy() )
     # Always saves the initialized model
     if not load_saved_models:
         save_weights(0)
@@ -339,18 +337,16 @@ def train_deepopt( dataset, problem, miniter, maxiter, alpha,
                                               dtype = tf.int32, name = 'maxiter', seed = RANDOM_SEED )
         # Open a GradientTape to record the operations run during the forward pass, which enables auto-differentiation.
         with tf.GradientTape() as tape:
-            # Stepsize
-            rho = tf.exp( log_rho )
             # Run the forward pass of the layer. The operations that the layer applies to its inputs are going to be recorded on the GradientTape.
             _, F, _ = deepopt_nonsmooth( problem, x0_train, A, A_adj, A_norm, b_train, W, W_adj, W_norm, lam, \
-                                         dx1_model, dx2_model, rho, n_iter_train, n_iter_train, \
+                                         dx1_model, dx2_model, theta, n_iter_train, n_iter_train, \
                                          tf.constant(alpha, dtype=tf.float32), \
                                          training = True, save_hist = False)
             loss = tf.reduce_mean( ( F - F_ref[:,-1] ) / ( F_ref[:,n_iter_train] - F_ref[:,-1] ) )
             reg_loss = tf.add_n( dx1_model.losses + dx2_model.losses )
             total_loss = loss + reg_loss
         # Use the gradient tape to automatically retrieve the gradients of the trainable variables with respect to the loss.
-        variables = dx1_model.trainable_variables + dx2_model.trainable_variables + [ log_rho ]
+        variables = dx1_model.trainable_variables + dx2_model.trainable_variables + [ theta ]
         grads = tape.gradient(total_loss, variables)
         # Run one step of gradient descent by updating the value of the variables to minimize the loss.
         optimizer.apply_gradients( zip( grads, variables ) )
@@ -471,7 +467,7 @@ def test_fista_ld( dataset, problem, mode, miniter, maxiter, gamma, alpha,
         d_model = keras.models.load_model( os.path.join( MODEL_PATH, 'd_model.keras') )
         e_model = keras.models.load_model( os.path.join( MODEL_PATH, 'e_model.keras') )
         v_model = keras.models.load_model( os.path.join( MODEL_PATH, 'v_model.keras') )
-        rho     = tf.constant( np.load( os.path.join( MODEL_PATH, 'rho.npy') ), dtype = tf.float32 )
+        theta   = tf.constant( np.load( os.path.join( MODEL_PATH, 'theta.npy') ), dtype = tf.float32 )
     else:
         raise ValueError('This algorithm has not been trained')
     ##### TEST STEP
@@ -482,7 +478,7 @@ def test_fista_ld( dataset, problem, mode, miniter, maxiter, gamma, alpha,
         # Number of iterations
         n_iter = tf.constant( iters, dtype = tf.int32, name = 'maxiter' )
         x, _, hist = fista_ld( problem, x0, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
-                               d_model, e_model, v_model, rho,
+                               d_model, e_model, v_model, theta,
                                n_iter, maxiter, gamma, alpha,
                                training = False, save_hist = True
                               )
@@ -519,7 +515,7 @@ def test_deepopt( dataset, problem, mode, miniter, maxiter, alpha, epochs, date,
     if os.path.exists(MODEL_PATH):
         dx1_model = keras.models.load_model( os.path.join( MODEL_PATH, 'dx1.keras') )
         dx2_model = keras.models.load_model( os.path.join( MODEL_PATH, 'dx2.keras') )
-        rho       = tf.constant( np.load( os.path.join( MODEL_PATH, 'rho.npy') ), dtype = tf.float32 )
+        theta     = tf.constant( np.load( os.path.join( MODEL_PATH, 'theta.npy') ), dtype = tf.float32 )
     else:
         raise ValueError('This algorithm has not been trained')       
     ##### TEST STEP
@@ -530,7 +526,7 @@ def test_deepopt( dataset, problem, mode, miniter, maxiter, alpha, epochs, date,
         # Number of iterations
         n_iter = tf.constant( iters, dtype = tf.int32, name = 'maxiter' )
         x, _, hist = deepopt_nonsmooth( problem, x0, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
-                                        dx1_model, dx2_model, rho, n_iter, maxiter, tf.constant(alpha, dtype=tf.float32),
+                                        dx1_model, dx2_model, theta, n_iter, maxiter, tf.constant(alpha, dtype=tf.float32),
                                         training = False, save_hist = True )
         return x, hist
     

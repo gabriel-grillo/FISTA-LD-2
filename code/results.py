@@ -1,6 +1,7 @@
 import os
 import numpy as np
 from itertools import product
+from datetime import datetime
 
 from paths import plot_path
 import plots_and_metrics as pm
@@ -16,7 +17,8 @@ TEST_DATASET_RATIO  = 1.0
 PROBLEM             = 'lstv'
 
 # TRANING PARAMETERS
-DATE                = '2026-11-05'
+# DATE                = '2026-11-05'
+DATE                = datetime.today().strftime('%Y-%m-%d')
 EPOCHS_TO_SAVE      = [ 20 ]
 MINITER             = [ 1 ]
 MAXITER             = [ 10 ]

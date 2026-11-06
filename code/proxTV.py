@@ -19,7 +19,11 @@ class proxTV():
 
     # Projecting the image onto the box
     def box_projection( self, x ):
-        return tf.math.minimum( tf.math.maximum( x, self.lower ), self.upper )
+        if self.lower > -inf:
+            x = tf.math.maximum( x, self.lower )
+        if self.upper < inf:
+            x = tf.math.minimum( x, self.upper )
+        return x
 
     def __call__(self, z, rho, eps):
         # Initialization of the dual variables (shared across outer iterations)
