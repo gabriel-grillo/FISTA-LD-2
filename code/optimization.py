@@ -127,7 +127,7 @@ def computeR( problem, x0, A, A_adj, A_norm, b, W, W_adj, W_norm, lam ):
 ########################## FISTA with Learned Deviations ##########################
 def fista_ld( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
               d_model, e_model, v_model, rho,
-              MAXITER, MAXITER_DEVS, gamma, alpha,
+              MAXITER, MAXITER_DEVS, gamma, alpha, mu = 0.99,
               training = False, save_hist = True
              ):
     
@@ -185,7 +185,7 @@ def fista_ld( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
         if tf.less_equal( i, MAXITER_DEVS ):
             current_rho = rho[i-1]
         else:
-            current_rho = 1 / L
+            current_rho = mu / L
 
         ## y update
         y = ( 1 - 1 / t ) * x + ( 1 / t ) * z
@@ -238,14 +238,15 @@ def fista_ld( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
             # Inertial step with deviation
             z = x + ( t - 1 ) * ( x - x_prev ) + v
         else:
+            v = tf.zeros_like(x)
             v_norm_upper_bound = 0.0 * R0
 
         ## t update
         if tf.less( i, MAXITER_DEVS ):
             next_rho = rho[i]
         else:
-            next_rho = 1 / L
-        t = (1-alpha) / 2 + tf.sqrt( current_rho / next_rho ) * t
+            next_rho = mu / L
+        t = tf.math.maximum( 1.0, ( 1 - alpha ) / 2 + tf.sqrt( current_rho / next_rho ) * t )
         
         ## Saves history
         if save_hist:
@@ -271,7 +272,7 @@ def fista_ld( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
     
 ########################## Baseline algorithms ##########################
 def fista( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
-           MAXITER, gamma, alpha,
+           MAXITER, gamma, alpha, mu = 0.99,
            save_hist = True
           ):
     
@@ -285,7 +286,7 @@ def fista( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
     i = tf.constant(0, dtype=tf.int32, name = 'i')
     t = tf.constant(1.0, dtype=tf.float32, name = 't')
     z = x
-    rho = 1 / L
+    rho = mu / L
     if problem == 'lstv':
         R0 = computeR( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam )
     else:

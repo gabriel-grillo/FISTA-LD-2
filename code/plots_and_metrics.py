@@ -44,16 +44,15 @@ def load_data( data_name, test_mode, dataset, test_dataset_ratio, problem, date,
     dicts_list = []
     if data_name in ['Fhist', 'flag_hist', 'inner_iter_hist', 'eps_hist']:
         ##### ISTA RESULTS
-        if problem != 'lstv':
-            hist_path_ista = hist_path( 'ista', [ test_mode, dataset, test_dataset_ratio, problem ] )
-            dicts_list.append(
-                dict(
-                    data  = np.load( os.path.join( hist_path_ista, data_name + '.npy' ) ),
-                    label = 'ISTA',
-                    ls    = '-.',
-                    c     = 'k'
-                )
+        hist_path_ista = hist_path( 'ista', [ test_mode, dataset, test_dataset_ratio, problem ] )
+        dicts_list.append(
+            dict(
+                data  = np.load( os.path.join( hist_path_ista, data_name + '.npy' ) ),
+                label = 'ISTA',
+                ls    = '-.',
+                c     = 'k'
             )
+        )
         ##### FISTA RESULTS
         for i,params in enumerate(fista_list):
             gamma, alpha = params

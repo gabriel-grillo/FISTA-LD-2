@@ -11,25 +11,25 @@ import plots_and_metrics as pm
 
 ######################### TRAINING - TESTING PARAMETERS ##################################
 TEST_MODE           = 'val'
-DATASET             = 'mayo_clinic_128'
+DATASET             = 'mayo_clinic_512'
 TEST_DATASET_RATIO  = 1.0
-PROBLEM             = 'lasso'
+PROBLEM             = 'lstv'
 
 # TRANING PARAMETERS
-DATE                = '2026-10-22'
+DATE                = '2026-11-05'
 EPOCHS_TO_SAVE      = [ 20 ]
-MINITER             = [  2 ]
-MAXITER             = [ 20 ]
+MINITER             = [ 1 ]
+MAXITER             = [ 10 ]
 TRAIN_DATASET_RATIO = [ 1.0 ]
 
 # FISTA PARAMETER
 GAMMA_FISTA_UNTRAINED  = [ 1.5 ]
-ALPHA_FISTA_UNTRAINED  = [ 0.3 ]
+ALPHA_FISTA_UNTRAINED  = [ 0.7 ]
 PARAMS_FISTA_UNTRAINED = list( zip( GAMMA_FISTA_UNTRAINED, ALPHA_FISTA_UNTRAINED ) )
 
 # FISTA-LD PARAMETERS
 GAMMA  = [ 1.5 ]
-ALPHA  = [ 0.3 ]
+ALPHA  = [ 0.7 ]
 PARAMS = list( zip( GAMMA, ALPHA ) )
 FISTA_LD_LIST = list( product( PARAMS, TRAIN_DATASET_RATIO, EPOCHS_TO_SAVE, list( zip( MINITER, MAXITER ) ) ) )
 

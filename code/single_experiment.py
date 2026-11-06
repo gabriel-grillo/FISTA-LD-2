@@ -1,14 +1,14 @@
 import os
+from datetime import datetime
 ### For reproducibility
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 os.environ["PYTHONHASHSEED"] = "42"
 
-# import pynvml
 import tensorflow as tf
 
 ### GPU settings
 TF_USE_GPU  = True
-VRAM_MB = 3.5 * 1024
+VRAM_MB = 13.0 * 1024
 if TF_USE_GPU:
     # Listing visable GPUs and asserting that there is at least one
     gpus = tf.config.list_physical_devices('GPU')
@@ -39,33 +39,33 @@ from traintest import test_untrained, train_fista_ld, test_fista_ld, train_deepo
 #######################################################################################################
 
 ##### TRAINING - TESTING PARAMETERS
-DATASET             = 'mayo_clinic_128'   # 'mayo_clinic_128' or 'mayo_clinic_512'
-PROBLEM             = 'lasso'             # 'nnls' or 'lasso' or 'slasso' or 'nnslasso' or 'lstv'
-DATE                = '2026-10-22'
+DATASET             = 'mayo_clinic_512'   # 'mayo_clinic_128' or 'mayo_clinic_512'
+PROBLEM             = 'lstv'             # 'nnls' or 'lasso' or 'slasso' or 'nnslasso' or 'lstv'
+DATE                = datetime.today().strftime('%Y-%m-%d')
 
 TRAIN_BATCH_SIZE    = 1
 EPOCHS_TO_SAVE      = [ 20 ]
 EPOCHS              = max(EPOCHS_TO_SAVE)
 LOAD_SAVED_MODELS   = False
-MINITER             = [  2 ]
-MAXITER             = [ 20 ]
+MINITER             = [  1 ]
+MAXITER             = [ 10 ]
 
 TEST_MODE           = 'val' # 'test' or 'val'
-TEST_ITERS          = 1000
+TEST_ITERS          = 200
 TEST_BATCH_SIZE     = 32
 
 TRAIN_DATASET_RATIO = [ 1.0 ]
-TEST_DATASET_RATIO  = [ 1.0 ] * len(TRAIN_DATASET_RATIO)
+TEST_DATASET_RATIO  = [ 1.0 ]
 DATASET_RATIO = list( zip( TRAIN_DATASET_RATIO, TEST_DATASET_RATIO ) )
 
 # FISTA PARAMETER
-GAMMA_FISTA_UNTRAINED  = [ 1.5, 1.5 ]
-ALPHA_FISTA_UNTRAINED  = [ 0.3, 0.7 ]
+GAMMA_FISTA_UNTRAINED  = [ 1.5 ]
+ALPHA_FISTA_UNTRAINED  = [ 0.7 ]
 PARAMS_FISTA_UNTRAINED = list( zip( GAMMA_FISTA_UNTRAINED, ALPHA_FISTA_UNTRAINED ) )
 
 # FISTA-LD PARAMETERS -- set a negative const_tau to enable varying tau
-GAMMA  = [ 1.5, 1.5 ]
-ALPHA  = [ 0.3, 0.7 ]
+GAMMA  = [ 1.5 ]
+ALPHA  = [ 0.7 ]
 PARAMS = list( zip( GAMMA, ALPHA ) )
 
 # DEEPOPT PARAMETER
@@ -78,14 +78,14 @@ ALPHA_DO = [ 0.5 ]
 ##### For time measurement
 start_time = time.time()
 
-# ##### TEST UNTRAINED ALGORITHMS
-# for dataset_ratio in set(TEST_DATASET_RATIO):
-#     print(f'Testing ISTA with {100*dataset_ratio} percent of data')
-#     test_untrained( DATASET, PROBLEM, TEST_MODE, 'ista', TEST_BATCH_SIZE, TEST_ITERS, dataset_ratio = dataset_ratio )
-#     for params in PARAMS_FISTA_UNTRAINED:
-#         gamma, alpha = params
-#         print(f'Testing FISTA ( gamma={gamma}, alpha={alpha} ) with {100*dataset_ratio} percent of data')
-#         test_untrained( DATASET, PROBLEM, TEST_MODE, 'fista', TEST_BATCH_SIZE, TEST_ITERS, gamma = gamma, alpha = alpha, dataset_ratio = dataset_ratio )
+##### TEST UNTRAINED ALGORITHMS
+for dataset_ratio in set(TEST_DATASET_RATIO):
+    print(f'Testing ISTA with {100*dataset_ratio} percent of data')
+    test_untrained( DATASET, PROBLEM, TEST_MODE, 'ista', TEST_BATCH_SIZE, TEST_ITERS, dataset_ratio = dataset_ratio )
+    for params in PARAMS_FISTA_UNTRAINED:
+        gamma, alpha = params
+        print(f'Testing FISTA ( gamma={gamma}, alpha={alpha} ) with {100*dataset_ratio} percent of data')
+        test_untrained( DATASET, PROBLEM, TEST_MODE, 'fista', TEST_BATCH_SIZE, TEST_ITERS, gamma = gamma, alpha = alpha, dataset_ratio = dataset_ratio )
 
 ##### TRAINING - TESTING FISTA-LD 
 for i, options in enumerate( product( DATASET_RATIO, list(zip(MINITER,MAXITER)), PARAMS ) ):

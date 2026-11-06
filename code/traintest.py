@@ -8,7 +8,7 @@ import matplotlib.pyplot as pp
 pp.rcParams[ 'savefig.bbox' ] = 'tight'
 
 from operators import reconstruction_operators, torch_linear_op_as_tf2_layer, wavelet_as_tf2_layer
-from data import get_dataset
+from data import get_dataset, get_observed_data
 from optimization import fista, ista, fista_ld, deepopt_nonsmooth
 from paths import model_path, hist_path
 
@@ -41,28 +41,31 @@ def problem_definition( dataset, mode, problem, batch_size, dataset_ratio ):
         lam = tf.constant( lam, dtype = tf.float32, name = 'lam' )
     W_norm = tf.constant( reg_trafo_norm, dtype = tf.float32, name = 'W_norm' )
     
-    
-    ###### REFERENCE FUNCTIONAL VALUES FOR TRAINING
-    gamma_FISTA   = 1.5
-    alpha_FISTA   = 0.7
-    if problem == 'lstv':
-        maxiter_FISTA = 200
+    if mode == 'train':
+        ###### REFERENCE FUNCTIONAL VALUES FOR TRAINING
+        gamma_FISTA   = 1.5
+        alpha_FISTA   = 0.7
+        if problem == 'lstv':
+            maxiter_FISTA = 200
+        else:
+            maxiter_FISTA = 400
+        @tf.function
+        def F_ref( b ):
+            # Initial point
+            x0  = tf.zeros( shape = (tf.shape(b)[0],) + x_shape, dtype = tf.float32, name = 'x0' )
+            # Iterates FISTA saving functional values
+            _, _, hist = fista( problem, x0, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
+                                maxiter_FISTA, gamma_FISTA, alpha_FISTA,
+                                save_hist = True
+                            )
+            # Returns only the functional values history
+            return hist[0]
+        
+        ##### DATASET
+        ds = get_dataset( dataset, mode, problem, batch_size, F_ref, overall_ratio = dataset_ratio )
     else:
-        maxiter_FISTA = 1000
-    @tf.function
-    def F_ref( b ):
-        # Initial point
-        x0  = tf.zeros( shape = (tf.shape(b)[0],) + x_shape, dtype = tf.float32, name = 'x0' )
-        # Iterates FISTA saving functional values
-        _, _, hist = fista( problem, x0, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
-                            maxiter_FISTA, gamma_FISTA, alpha_FISTA,
-                            save_hist = True
-                          )
-        # Returns only the functional values history
-        return hist[0]
-    
-    ##### DATASET
-    ds = get_dataset( dataset, mode, problem, batch_size, F_ref, overall_ratio = dataset_ratio )
+        ##### DATASET
+        ds = get_observed_data( dataset, mode, batch_size, overall_ratio = dataset_ratio )
 
     return ds, A, A_adj, A_norm, W, W_adj, W_norm, lam, x_shape
 
@@ -146,16 +149,14 @@ def network_base_arch( input_list, name ):
     N_OUT = 1
     N_LAYERS = 2
 
-    # input_convnet = keras.layers.Concatenate(axis=-1)(input_list)
-    # x = keras.layers.GroupNormalization(groups=-1)(input_convnet)
-
-    x = keras.layers.Concatenate(axis=-1)(input_list)
+    input_convnet = keras.layers.Concatenate(axis=-1)(input_list)
+    x = keras.layers.GroupNormalization(groups=-1)(input_convnet)
     for _ in range(N_LAYERS):
         x = keras.layers.Conv2D(FILTERS, KSIZE,
                                 padding='same',
                                 kernel_regularizer=keras.regularizers.L2(1e-3),
                                 kernel_initializer=keras.initializers.VarianceScaling(scale = 1e-2, seed=RANDOM_SEED))(x)
-        # x = keras.layers.GroupNormalization(groups=-1)(x)
+        x = keras.layers.GroupNormalization(groups=-1)(x)
         x = keras.layers.LeakyReLU()(x)
     result = keras.layers.Conv2D(N_OUT, KSIZE,
                                  padding='same',
@@ -167,7 +168,6 @@ def network_base_arch( input_list, name ):
 def train_fista_ld( dataset, problem, miniter, maxiter, gamma, alpha,
                     epochs, batch_size, date, load_saved_models, 
                     dataset_ratio = 1.0, epochs_to_save = [] ):
-    assert miniter > 1, 'Must train at least 2 iterations.'
     ######################### PROBLEM'S DEFINITION ##################################
     ds_train, A, A_adj, A_norm, W, W_adj, W_norm, lam, x_shape = \
         problem_definition( dataset, 'train', problem, batch_size, dataset_ratio )
@@ -365,7 +365,7 @@ def train_deepopt( dataset, problem, miniter, maxiter, alpha,
 #######################################################################################################################
 def test_loop( test_step, ds, batch_size, result_path, filenames ):
     hist_list = []
-    for step, (b,_) in enumerate(ds):
+    for step, b in enumerate(ds):
         # Running the algorithm
         rec, hist = test_step( b )
         
