@@ -2,7 +2,7 @@ import os
 
 def model_path( algorithm, list_of_parameters, load_saved_models, training ):
     if algorithm == 'fista-ld':
-        dataset, dataset_ratio, problem, miniter, maxiter, gamma, alpha, date = list_of_parameters
+        dataset, dataset_ratio, problem, miniter, maxiter, gamma, alpha, date, ablation = list_of_parameters
         path = os.path.join( os.getcwd(), 'models', 'fista-ld', dataset, str( int( dataset_ratio * 100 ) ) + 'percent', problem )
         if maxiter == miniter:
             path = os.path.join( path, 'iters_fixed_' + str(maxiter) )
@@ -10,7 +10,7 @@ def model_path( algorithm, list_of_parameters, load_saved_models, training ):
             path = os.path.join( path, 'iters_random_' + str(miniter) + '_' + str(maxiter) ) 
         else:
             raise ValueError()
-        path = os.path.join( path, f'gamma_{gamma:.2e}', f'alpha_{alpha:.2e}', 'date_' + date  )
+        path = os.path.join( path, f'gamma_{gamma:.2e}', f'alpha_{alpha:.2e}', 'date_' + date, 'ablation_' + ablation )
     elif algorithm == 'deepopt':
         dataset, dataset_ratio, problem, miniter, maxiter, alpha, date = list_of_parameters
         path = os.path.join( os.getcwd(), 'models', 'deepopt', dataset, str( int( dataset_ratio * 100 ) ) + 'percent', problem )
@@ -46,7 +46,7 @@ def hist_path( algorithm, list_of_parameters ):
         path = os.path.join( os.getcwd(), 'hist', mode, 'untrained', algorithm, \
                              f'gamma_{gamma:.2e}', f'alpha_{alpha:.2e}', dataset, str( int( dataset_ratio * 100 ) ) + 'percent', problem )
     elif algorithm == 'fista-ld':
-        mode, dataset, train_dataset_ratio, test_dataset_ratio, problem, miniter, maxiter, gamma, alpha, date, epochs = list_of_parameters
+        mode, dataset, train_dataset_ratio, test_dataset_ratio, problem, miniter, maxiter, gamma, alpha, date, ablation, epochs = list_of_parameters
         path = os.path.join( os.getcwd(), 'hist', mode, 'trained', 'fista-ld', dataset, \
                              f'{int(100*train_dataset_ratio)}percent_train', \
                              f'{int(100*test_dataset_ratio)}percent_test', \
@@ -57,7 +57,7 @@ def hist_path( algorithm, list_of_parameters ):
             path = os.path.join( path, 'iters_random_' + str(miniter) + '_' + str(maxiter) ) 
         else:
             raise ValueError()
-        path = os.path.join( path, f'gamma_{gamma:.2e}', f'alpha_{alpha:.2e}', 'date_' + date  )
+        path = os.path.join( path, f'gamma_{gamma:.2e}', f'alpha_{alpha:.2e}', 'date_' + date, 'ablation_' + ablation  )
         path = os.path.join( path, f'epoch_{epochs}' )
     elif algorithm == 'deepopt':
         mode, dataset, train_dataset_ratio, test_dataset_ratio, problem, miniter, maxiter, alpha, date, epochs = list_of_parameters

@@ -168,6 +168,7 @@ def fista_ld( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
     i = tf.constant(0, dtype=tf.int32, name = 'i')
     t = tf.constant(1.0, dtype=tf.float32, name = 't')
     z = x
+    x_tilde = x
     R0 = computeR( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam )
     d = tf.zeros_like( x )
     e = tf.zeros_like( x )
@@ -185,6 +186,7 @@ def fista_ld( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
         v_ub_hist       = tf.fill( [ batch_size, MAXITER     ], 0.0, name = 'v_ub_hist'       )
         flag_hist       = tf.fill( [ batch_size, MAXITER     ],   0, name = 'flag_hist'       )
         inner_iter_hist = tf.fill( [ batch_size, MAXITER     ],   0, name = 'inner_iter_hist' )
+        rho_hist        = tf.fill( [ batch_size, MAXITER     ], 0.0, name = 'rho_hist'        )
 
         fx, _ = f( x )
         Fx = fx + g( x )
@@ -200,6 +202,7 @@ def fista_ld( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
         v_ub_hist       = []
         flag_hist       = []
         inner_iter_hist = []
+        rho_hist        = []
 
     while tf.less(i, MAXITER):
         ## i update
@@ -240,19 +243,18 @@ def fista_ld( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
         # Proximal step
         eps = R0 / tf.cast( i, dtype = tf.float32 ) ** gamma
         eps /= t ** 2
-        x, flag, inner_iter = prox( y, current_rho, eps )
+        x_tilde, flag, inner_iter = prox( y, current_rho, eps )
 
         # e deviation
         e_norm_upper_bound = R0 / tf.cast( i, dtype = tf.float32 ) ** gamma
         e_norm_upper_bound /= t
-        if tf.less_equal(i, MAXITER_DEVS):
-            e = e_model( [ y, ( y - x ) / current_rho, d, e ], training = training )
+        if tf.less(i, MAXITER_DEVS):
+            e = e_model( [ y, ( y - x_tilde ) / current_rho, d, e ], training = training )
             e = safely_normalize( e, e_norm_upper_bound[:,tf.newaxis,tf.newaxis,tf.newaxis] )
         else:
-            e = tf.zeros_like(x)
+            e = tf.zeros_like(x_tilde)
         # Adding e deviation
-        x += e
-        x = proj_C( x )
+        x = proj_C( x_tilde + e )
 
         ## z update
         if tf.less( i, MAXITER ):
@@ -278,9 +280,9 @@ def fista_ld( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
         
         ## Saves history
         if save_hist:
-            fx,_ = f(x)
-            Fx = fx + g(x)
-            Fhist     += tf.one_hot( i, MAXITER + 1 ) * tf.expand_dims( Fx, axis = 1 )
+            fx_tilde,_ = f(x_tilde)
+            Fx_tilde   = fx_tilde + g(x_tilde)
+            Fhist     += tf.one_hot( i, MAXITER + 1 ) * tf.expand_dims( Fx_tilde, axis = 1 )
             eps_hist  += tf.one_hot( i - 1, MAXITER ) * tf.expand_dims( eps, axis = 1 )
             d_hist    += tf.one_hot( i - 1, MAXITER ) * tf.expand_dims( tf.sqrt( tf.reduce_sum( d**2, axis = [1,2,3] ) ), axis = 1 )
             d_ub_hist += tf.one_hot( i - 1, MAXITER ) * tf.expand_dims( d_norm_upper_bound, axis = 1 )
@@ -290,12 +292,13 @@ def fista_ld( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
             v_ub_hist += tf.one_hot( i - 1, MAXITER ) * tf.expand_dims( v_norm_upper_bound, axis = 1 )
             flag_hist += tf.one_hot( i - 1, MAXITER, dtype = tf.int32 ) * tf.expand_dims( flag, axis = 1 )
             inner_iter_hist += tf.one_hot( i - 1, MAXITER, dtype = tf.int32 ) * tf.expand_dims( inner_iter, axis = 1 )
+            rho_hist  += tf.one_hot( i - 1, MAXITER ) * current_rho
 
     # Final functional value
-    fx,_ = f(x)
-    Fx = fx + g(x)
+    fx_tilde,_ = f(x_tilde)
+    Fx_tilde = fx_tilde + g(x_tilde)
     
-    return x, Fx, [Fhist, eps_hist, d_hist, d_ub_hist, e_hist, e_ub_hist, v_hist, v_ub_hist, flag_hist, inner_iter_hist]
+    return x_tilde, Fx_tilde, [Fhist, eps_hist, d_hist, d_ub_hist, e_hist, e_ub_hist, v_hist, v_ub_hist, flag_hist, inner_iter_hist, rho_hist]
 
     
 ########################## Baseline algorithms ##########################
@@ -326,6 +329,7 @@ def fista( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
         eps_hist        = tf.fill( [ batch_size, MAXITER     ], 0.0, name = 'eps_hist'        )
         flag_hist       = tf.fill( [ batch_size, MAXITER     ],   0, name = 'flag_hist'       )
         inner_iter_hist = tf.fill( [ batch_size, MAXITER     ],   0, name = 'inner_iter_hist' )
+        rho_hist        = tf.fill( [ batch_size, MAXITER     ], 0.0, name = 'rho_hist'        )
 
         fx, _ = f( x )
         Fx = fx + g( x )
@@ -334,6 +338,7 @@ def fista( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
         Fhist           = []
         flag_hist       = []
         inner_iter_hist = []
+        rho_hist        = []
 
     while tf.less(i, MAXITER):
         ## Saves previous iteration
@@ -351,13 +356,14 @@ def fista( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
         _, grad_y = f( y )
         grad = grad_y()
 
-        # Gradient step with deviation
-        w = y - rho * grad
+        # Gradient step
+        grad *= rho
+        y -= grad
 
         # Proximal step
         eps = R0 / tf.cast( i, dtype = tf.float32 ) ** gamma
         eps /= t ** 2
-        x, flag, inner_iter = prox( w, rho, eps )
+        x, flag, inner_iter = prox( y, rho, eps )
 
         ## z update
         # Inertial step
@@ -374,12 +380,13 @@ def fista( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
             eps_hist  += tf.one_hot( i - 1, MAXITER ) * tf.expand_dims( eps, axis = 1 )
             flag_hist += tf.one_hot( i - 1, MAXITER, dtype = tf.int32 ) * tf.expand_dims( flag, axis = 1 )
             inner_iter_hist += tf.one_hot( i - 1, MAXITER, dtype = tf.int32 ) * tf.expand_dims( inner_iter, axis = 1 )
+            rho_hist  += tf.one_hot( i - 1, MAXITER ) * rho
 
     # Final functional value
     fx,_ = f(x)
     Fx = fx + g(x)
     
-    return x, Fx, [Fhist, eps_hist, flag_hist, inner_iter_hist]
+    return x, Fx, [Fhist, eps_hist, flag_hist, inner_iter_hist, rho_hist]
 
 def ista( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
           MAXITER, save_hist = True
@@ -394,14 +401,16 @@ def ista( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
     i = tf.constant(0, dtype=tf.int32, name = 'i')
     if save_hist:
         Fhist           = tf.fill( [ batch_size, MAXITER + 1 ], 0.0, name = 'Fhist'           )
-        eps_hist        = tf.fill( [ batch_size, MAXITER     ], 0.0, name = 'eps_hist'           )
+        eps_hist        = tf.fill( [ batch_size, MAXITER     ], 0.0, name = 'eps_hist'        )
         flag_hist       = tf.fill( [ batch_size, MAXITER     ],   0, name = 'flag_hist'       )
         inner_iter_hist = tf.fill( [ batch_size, MAXITER     ],   0, name = 'inner_iter_hist' )
+        rho_hist        = tf.fill( [ batch_size, MAXITER     ], 0.0, name = 'rho_hist'        )
     else:
         Fhist           = []
         eps_hist        = []
         flag_hist       = []
         inner_iter_hist = []
+        rho_hist        = []
 
     while tf.less(i, MAXITER):
         ## Performs proximal gradient step
@@ -425,6 +434,7 @@ def ista( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
         if save_hist:
             flag_hist += tf.one_hot( i - 1, MAXITER, dtype = tf.int32 ) * tf.expand_dims( flag, axis = 1 )
             inner_iter_hist += tf.one_hot( i - 1, MAXITER, dtype = tf.int32 ) * tf.expand_dims( inner_iter, axis = 1 )
+            rho_hist  += tf.one_hot( i - 1, MAXITER ) * 1/L
 
     # Final functional value
     fx,_ = f(x)
@@ -434,7 +444,7 @@ def ista( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
     if save_hist:
         Fhist += tf.one_hot( i, MAXITER + 1 ) * tf.expand_dims( Fx, axis = 1 )
     
-    return x, Fx, [Fhist, eps_hist, flag_hist, inner_iter_hist]
+    return x, Fx, [Fhist, eps_hist, flag_hist, inner_iter_hist, rho_hist]
 
 
 ########################## Deep Optimization ##########################
@@ -461,7 +471,7 @@ def deepopt_nonsmooth( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
 
     ## Stepsize limits
     c_min = 0.1
-    c_max = 2.0
+    c_max = 2.0 - 1e-3
     theta_center = tf.math.log( ( c_max - 1 ) / ( 1 - c_min ) )
     gamma_min = c_min * beta
     gamma_max = c_max * beta # gamma in (0,2beta)
@@ -474,6 +484,7 @@ def deepopt_nonsmooth( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
         dx2_ub_hist     = tf.fill( [ batch_size, MAXITER     ], 0.0, name = 'dx2_ub_hist'     )
         flag_hist       = tf.fill( [ batch_size, MAXITER     ],   0, name = 'flag_hist'       )
         inner_iter_hist = tf.fill( [ batch_size, MAXITER     ],   0, name = 'inner_iter_hist' )
+        stepsize_hist   = tf.fill( [ batch_size, MAXITER     ], 0.0, name = 'stepsize_hist'   )
 
         Fx = fx + g(x)
         Fhist += tf.one_hot( i, MAXITER + 1 ) * tf.expand_dims( Fx, axis = 1 )
@@ -485,6 +496,7 @@ def deepopt_nonsmooth( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
         dx2_ub_hist     = []
         flag_hist       = []
         inner_iter_hist = []
+        stepsize_hist   = []
 
     while tf.less(i, MAXITER):
         ## Step-size
@@ -537,9 +549,10 @@ def deepopt_nonsmooth( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
             dx2_ub_hist += tf.one_hot( i-1, MAXITER ) * tf.expand_dims( c2, axis = 1 )
             flag_hist += tf.one_hot( i - 1, MAXITER, dtype = tf.int32 ) * tf.expand_dims( flag, axis = 1 )
             inner_iter_hist += tf.one_hot( i - 1, MAXITER, dtype = tf.int32 ) * tf.expand_dims( inner_iter, axis = 1 )
+            stepsize_hist += tf.one_hot( i - 1, MAXITER ) * gamma
     
     # Final functional value
     fx,_ = f(x)
     Fx = fx + g(x)
     
-    return x, Fx, [Fhist, dx1_hist, dx1_ub_hist, dx2_hist, dx2_ub_hist, flag_hist, inner_iter_hist ]
+    return x, Fx, [Fhist, dx1_hist, dx1_ub_hist, dx2_hist, dx2_ub_hist, flag_hist, inner_iter_hist, stepsize_hist ]

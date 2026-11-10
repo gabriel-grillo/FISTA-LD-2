@@ -166,7 +166,7 @@ def network_base_arch( input_list, name ):
     return keras.Model( inputs = input_list, outputs = result, name = name )
 
 def train_fista_ld( dataset, problem, miniter, maxiter, gamma, alpha,
-                    epochs, batch_size, date, load_saved_models, 
+                    epochs, batch_size, date, load_saved_models, ablation,
                     dataset_ratio = 1.0, epochs_to_save = [] ):
     ######################### PROBLEM'S DEFINITION ##################################
     ds_train, A, A_adj, A_norm, W, W_adj, W_norm, lam, x_shape = \
@@ -174,64 +174,84 @@ def train_fista_ld( dataset, problem, miniter, maxiter, gamma, alpha,
 
     ######################### MODELS' PATH ##################################
     MODEL_PATH = model_path( 'fista-ld',
-                             [dataset, dataset_ratio, problem, miniter, maxiter, gamma, alpha, date],
+                             [dataset, dataset_ratio, problem, miniter, maxiter, gamma, alpha, date, ablation],
                              load_saved_models,
                              training = True )
 
     ######################### MODELS' DEFINITION ##################################
     ##### D MODEL
-    if load_saved_models:
-        with open( os.path.join( MODEL_PATH, 'info.dat' ), 'r' ) as file:
-            lines = np.loadtxt( file )
-            last_epoch = int(lines[0])
-        d_model = keras.models.load_model( os.path.join( MODEL_PATH, f'epoch_{int(last_epoch)}', 'd_model.keras' ) )
+    if ablation == 'd' or ablation == 'dev' or ablation == 'all':
+        if load_saved_models:
+            with open( os.path.join( MODEL_PATH, 'info.dat' ), 'r' ) as file:
+                lines = np.loadtxt( file )
+                last_epoch = int(lines[0])
+            d_model = keras.models.load_model( os.path.join( MODEL_PATH, f'epoch_{int(last_epoch)}', 'd_model.keras' ) )
+        else:
+            input_y      = keras.Input(shape=x_shape, name='y')
+            input_grad   = keras.Input(shape=x_shape, name='grad')
+            input_d_prev = keras.Input(shape=x_shape, name='d_prev')
+            d_input_list = [ input_y, input_grad, input_d_prev ]
+            d_model      = network_base_arch( d_input_list, "d_model" )
+        d_model.summary()
     else:
-        input_y      = keras.Input(shape=x_shape, name='y')
-        input_grad   = keras.Input(shape=x_shape, name='grad')
-        input_d_prev = keras.Input(shape=x_shape, name='d_prev')
-        d_input_list = [ input_y, input_grad, input_d_prev ]
-        d_model      = network_base_arch( d_input_list, "d_model" )
-    d_model.summary()
+        def d_model( *args, **kwargs ):
+            return tf.zeros((1,)+x_shape)
     ##### E MODEL
-    if load_saved_models:
-        with open( os.path.join( MODEL_PATH, 'info.dat' ), 'r' ) as file:
-            lines = np.loadtxt( file )
-            last_epoch = int(lines[0])
-        e_model = keras.models.load_model( os.path.join( MODEL_PATH, f'epoch_{int(last_epoch)}', 'e_model.keras' ) )
+    if ablation == 'e' or ablation == 'dev' or ablation == 'all':
+        if load_saved_models:
+            with open( os.path.join( MODEL_PATH, 'info.dat' ), 'r' ) as file:
+                lines = np.loadtxt( file )
+                last_epoch = int(lines[0])
+            e_model = keras.models.load_model( os.path.join( MODEL_PATH, f'epoch_{int(last_epoch)}', 'e_model.keras' ) )
+        else:
+            input_y              = keras.Input(shape=x_shape, name='y')
+            input_prox_direction = keras.Input(shape=x_shape, name='prox_direction')
+            input_d              = keras.Input(shape=x_shape, name='d')
+            input_e_prev         = keras.Input(shape=x_shape, name='e_prev')
+            e_input_list = [ input_y, input_prox_direction, input_d, input_e_prev ]
+            e_model      = network_base_arch( e_input_list, "e_model" )
+        e_model.summary()
     else:
-        input_y              = keras.Input(shape=x_shape, name='y')
-        input_prox_direction = keras.Input(shape=x_shape, name='prox_direction')
-        input_d              = keras.Input(shape=x_shape, name='d')
-        input_e_prev         = keras.Input(shape=x_shape, name='e_prev')
-        e_input_list = [ input_y, input_prox_direction, input_d, input_e_prev ]
-        e_model      = network_base_arch( e_input_list, "e_model" )
-    e_model.summary()
+        def e_model( *args, **kwargs ):
+            return tf.zeros((1,)+x_shape)
     ##### V MODEL
-    if load_saved_models:
-        with open( os.path.join( MODEL_PATH, 'info.dat' ), 'r' ) as file:
-            lines = np.loadtxt( file )
-            last_epoch = int(lines[0])
-        v_model = keras.models.load_model( os.path.join( MODEL_PATH, f'epoch_{int(last_epoch)}', 'v_model.keras' ) )
+    if ablation == 'v' or ablation == 'dev' or ablation == 'all':
+        if load_saved_models:
+            with open( os.path.join( MODEL_PATH, 'info.dat' ), 'r' ) as file:
+                lines = np.loadtxt( file )
+                last_epoch = int(lines[0])
+            v_model = keras.models.load_model( os.path.join( MODEL_PATH, f'epoch_{int(last_epoch)}', 'v_model.keras' ) )
+        else:
+            input_x                  = keras.Input(shape=x_shape, name='x')
+            input_inertial_direction = keras.Input(shape=x_shape, name='inertial_direction')
+            input_d              = keras.Input(shape=x_shape, name='d')
+            input_e              = keras.Input(shape=x_shape, name='e')
+            input_v_prev             = keras.Input(shape=x_shape, name='v_prev')
+            v_input_list = [ input_x, input_inertial_direction, input_d, input_e, input_v_prev ]
+            v_model      = network_base_arch( v_input_list, "v_model" )
+        v_model.summary()
     else:
-        input_x                  = keras.Input(shape=x_shape, name='x')
-        input_inertial_direction = keras.Input(shape=x_shape, name='inertial_direction')
-        input_d              = keras.Input(shape=x_shape, name='d')
-        input_e              = keras.Input(shape=x_shape, name='e')
-        input_v_prev             = keras.Input(shape=x_shape, name='v_prev')
-        v_input_list = [ input_x, input_inertial_direction, input_d, input_e, input_v_prev ]
-        v_model      = network_base_arch( v_input_list, "v_model" )
-    v_model.summary()
+        def v_model( *args, **kwargs ):
+            return tf.zeros((1,)+x_shape)
     ##### TRAINABLE STEPSIZES
-    theta = tf.Variable( initial_value = tf.zeros(maxiter), dtype = tf.float32, trainable = True, name='theta' )
+    if ablation == 'theta' or ablation == 'all':
+        theta = tf.Variable( initial_value = tf.zeros(maxiter), dtype = tf.float32, trainable = True, name='theta' )
+        l2_reg_theta = tf.keras.regularizers.l2(1e-5)
+    else:
+        theta = tf.zeros(maxiter)
     ##### SAVING INITIALIZED MODELS
     def save_weights(epoch):
         path_epoch = os.path.join( MODEL_PATH, f'epoch_{epoch}')
         if not os.path.exists( path_epoch ):
             os.makedirs( path_epoch )
-        d_model.save( os.path.join( path_epoch, 'd_model.keras' ) )
-        e_model.save( os.path.join( path_epoch, 'e_model.keras' ) )
-        v_model.save( os.path.join( path_epoch, 'v_model.keras' ) )
-        np.save( os.path.join( path_epoch, 'theta.npy' ), theta.numpy() )
+        if ablation == 'd' or ablation == 'dev' or ablation == 'all':
+            d_model.save( os.path.join( path_epoch, 'd_model.keras' ) )
+        if ablation == 'e' or ablation == 'dev' or ablation == 'all':
+            e_model.save( os.path.join( path_epoch, 'e_model.keras' ) )
+        if ablation == 'v' or ablation == 'dev' or ablation == 'all':
+            v_model.save( os.path.join( path_epoch, 'v_model.keras' ) )
+        if ablation == 'theta' or ablation == 'all':
+            np.save( os.path.join( path_epoch, 'theta.npy' ), theta.numpy() )
     # Always saves the initialized model
     if not load_saved_models:
         save_weights(0)
@@ -246,20 +266,40 @@ def train_fista_ld( dataset, problem, miniter, maxiter, gamma, alpha,
         x0_train  = tf.zeros( shape = (tf.shape(b_train)[0],) + x_shape, dtype = tf.float32, name = 'x0' )
         # Number of iterations
         if miniter == maxiter:
-            n_iter_train = tf.constant( maxiter, dtype = tf.int32, name = 'maxiter' )
+            n_iter_train = tf.constant( maxiter + 10, dtype = tf.int32, name = 'maxiter' )
         else:
-            n_iter_train = tf.random.uniform( shape = [],  minval = miniter, maxval = maxiter + 1, \
+            n_iter_train = tf.random.uniform( shape = [],  minval = miniter, maxval = maxiter + 10 + 1, \
                                               dtype = tf.int32, name = 'maxiter', seed = RANDOM_SEED )
         with tf.GradientTape() as tape:
             _, F, _ = fista_ld( problem, x0_train, A, A_adj, A_norm, b_train, W, W_adj, W_norm, lam,
                                 d_model, e_model, v_model, theta,
-                                n_iter_train, n_iter_train, gamma, alpha,
+                                n_iter_train, maxiter, gamma, alpha,
                                 training = True, save_hist = False
                                 )
             loss = tf.reduce_mean( ( F - F_ref[:,-1] ) / ( F_ref[:,n_iter_train] - F_ref[:,-1] ) )
-            reg_loss = tf.add_n( d_model.losses + e_model.losses + v_model.losses )
+            model_reg_losses = []
+            if ablation == 'd' or ablation == 'dev' or ablation == 'all':
+                model_reg_losses += d_model.losses
+            if ablation == 'e' or ablation == 'dev' or ablation == 'all':
+                model_reg_losses += e_model.losses
+            if ablation == 'v' or ablation == 'dev' or ablation == 'all':
+                model_reg_losses += v_model.losses
+            if ablation == 'd' or ablation == 'e' or ablation == 'v' or ablation == 'dev':
+                reg_loss = tf.add_n(  model_reg_losses )
+            elif ablation == 'theta':
+                reg_loss = l2_reg_theta(theta)
+            else:
+                reg_loss = tf.add_n(  model_reg_losses ) + l2_reg_theta(theta)
             total_loss = loss + reg_loss
-        variables = d_model.trainable_variables + e_model.trainable_variables + v_model.trainable_variables + [ theta ]
+        variables = []
+        if ablation == 'd' or ablation == 'dev' or ablation == 'all':
+            variables += d_model.trainable_variables
+        if ablation == 'e' or ablation == 'dev' or ablation == 'all':
+            variables += e_model.trainable_variables
+        if ablation == 'v' or ablation == 'dev' or ablation == 'all':
+            variables += v_model.trainable_variables
+        if ablation == 'theta' or ablation == 'all':
+            variables += [ theta ]
         grads = tape.gradient( total_loss, variables )
         optimizer.apply_gradients( zip( grads, variables ) )
         return loss
@@ -331,15 +371,15 @@ def train_deepopt( dataset, problem, miniter, maxiter, alpha,
         x0_train  = tf.zeros( shape = (tf.shape(b_train)[0],) + x_shape, dtype = tf.float32, name = 'x0' )
         # Number of iterations
         if miniter == maxiter:
-            n_iter_train = tf.constant( maxiter, dtype = tf.int32, name = 'maxiter' )
+            n_iter_train = tf.constant( maxiter + 10, dtype = tf.int32, name = 'maxiter' )
         else:
-            n_iter_train = tf.random.uniform( shape = [],  minval = miniter, maxval = maxiter + 1, \
+            n_iter_train = tf.random.uniform( shape = [],  minval = miniter, maxval = maxiter + 10 + 1, \
                                               dtype = tf.int32, name = 'maxiter', seed = RANDOM_SEED )
         # Open a GradientTape to record the operations run during the forward pass, which enables auto-differentiation.
         with tf.GradientTape() as tape:
             # Run the forward pass of the layer. The operations that the layer applies to its inputs are going to be recorded on the GradientTape.
             _, F, _ = deepopt_nonsmooth( problem, x0_train, A, A_adj, A_norm, b_train, W, W_adj, W_norm, lam, \
-                                         dx1_model, dx2_model, theta, n_iter_train, n_iter_train, \
+                                         dx1_model, dx2_model, theta, n_iter_train, maxiter, \
                                          tf.constant(alpha, dtype=tf.float32), \
                                          training = True, save_hist = False)
             loss = tf.reduce_mean( ( F - F_ref[:,-1] ) / ( F_ref[:,n_iter_train] - F_ref[:,-1] ) )
@@ -406,7 +446,7 @@ def test_untrained( dataset, problem, mode, algorithm, batch_size, iters, gamma 
         RESULT_PATH = hist_path( 'ista', [ mode, dataset, dataset_ratio, problem ] )
 
     FILENAMES = [
-        'Fhist.npy', 'eps_hist.npy', 'flag_hist.npy', 'inner_iter_hist.npy'
+        'Fhist.npy', 'eps_hist.npy', 'flag_hist.npy', 'inner_iter_hist.npy', 'stepsize_hist.npy'
     ]
 
     ######################### TEST STEP ##################################
@@ -439,7 +479,7 @@ def test_untrained( dataset, problem, mode, algorithm, batch_size, iters, gamma 
 
 
 def test_fista_ld( dataset, problem, mode, miniter, maxiter, gamma, alpha,
-                   epochs, batch_size, iters, date, dataset_ratio = (1.0,1.0) ):
+                   epochs, batch_size, iters, date, ablation, dataset_ratio = (1.0,1.0) ):
     ######################### PROBLEM'S DEFINITION ##################################
     train_dataset_ratio, test_dataset_ratio = dataset_ratio
     ds, A, A_adj, A_norm, W, W_adj, W_norm, lam, x_shape = \
@@ -448,26 +488,42 @@ def test_fista_ld( dataset, problem, mode, miniter, maxiter, gamma, alpha,
     ######################### RESULTS' PATH ##################################
     RESULT_PATH = hist_path( 'fista-ld',
                              [ mode, dataset, train_dataset_ratio, test_dataset_ratio,
-                               problem, miniter, maxiter, gamma, alpha, date, epochs ] )
+                               problem, miniter, maxiter, gamma, alpha, date, ablation, epochs ] )
     
     FILENAMES = [
         'Fhist.npy', 'eps_hist.npy', 'd_hist.npy', 'd_ub_hist.npy',
-        'e_hist.npy', 'e_ub_hist.npy', 'v_hist.npy', 'v_ub_hist.npy', 'flag_hist.npy', 'inner_iter_hist.npy'
+        'e_hist.npy', 'e_ub_hist.npy', 'v_hist.npy', 'v_ub_hist.npy', 'flag_hist.npy', 'inner_iter_hist.npy',
+        'stepsize_hist.npy'
     ]
 
     ######################### TEST STEP ##################################
     ##### MODELS' PATH
     MODEL_PATH = model_path( 'fista-ld',
-                             [dataset, train_dataset_ratio, problem, miniter, maxiter, gamma, alpha, date],
+                             [dataset, train_dataset_ratio, problem, miniter, maxiter, gamma, alpha, date, ablation],
                              load_saved_models = True,
                              training = False )
     ##### LOADING THE MODELS
     MODEL_PATH = os.path.join( MODEL_PATH, f'epoch_{epochs}' )
     if os.path.exists(MODEL_PATH):
-        d_model = keras.models.load_model( os.path.join( MODEL_PATH, 'd_model.keras') )
-        e_model = keras.models.load_model( os.path.join( MODEL_PATH, 'e_model.keras') )
-        v_model = keras.models.load_model( os.path.join( MODEL_PATH, 'v_model.keras') )
-        theta   = tf.constant( np.load( os.path.join( MODEL_PATH, 'theta.npy') ), dtype = tf.float32 )
+        if ablation == 'd' or ablation == 'dev' or ablation == 'all':
+            d_model = keras.models.load_model( os.path.join( MODEL_PATH, 'd_model.keras') )
+        else:
+            def d_model( *args, **kwargs ):
+                return tf.zeros((1,)+x_shape)
+        if ablation == 'e' or ablation == 'dev' or ablation == 'all':
+            e_model = keras.models.load_model( os.path.join( MODEL_PATH, 'e_model.keras') )
+        else:
+            def e_model( *args, **kwargs ):
+                return tf.zeros((1,)+x_shape)
+        if ablation == 'v' or ablation == 'dev' or ablation == 'all':
+            v_model = keras.models.load_model( os.path.join( MODEL_PATH, 'v_model.keras') )
+        else:
+            def v_model( *args, **kwargs ):
+                return tf.zeros((1,)+x_shape)            
+        if ablation == 'theta' or ablation == 'all':
+            theta   = tf.constant( np.load( os.path.join( MODEL_PATH, 'theta.npy') ), dtype = tf.float32 )
+        else:
+            theta = tf.zeros(maxiter)
     else:
         raise ValueError('This algorithm has not been trained')
     ##### TEST STEP
@@ -501,7 +557,8 @@ def test_deepopt( dataset, problem, mode, miniter, maxiter, alpha, epochs, date,
                                problem, miniter, maxiter, alpha, date, epochs ] )
     FILENAMES = [
         'Fhist.npy', 'dx1hist.npy', 'dx1ubhist.npy', 'dx2hist.npy',
-        'dx2ubhist.npy', 'flag_hist.npy', 'inner_iter_hist.npy'
+        'dx2ubhist.npy', 'flag_hist.npy', 'inner_iter_hist.npy',
+        'stepsize_hist.npy'
     ]
 
     ######################### TEST STEP ##################################

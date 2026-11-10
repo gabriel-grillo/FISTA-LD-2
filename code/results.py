@@ -13,16 +13,16 @@ import plots_and_metrics as pm
 ######################### TRAINING - TESTING PARAMETERS ##################################
 TEST_MODE           = 'val'
 DATASET             = 'mayo_clinic_512'
-TEST_DATASET_RATIO  = 1.0
+TEST_DATASET_RATIO  = 0.05
 PROBLEM             = 'lstv'
 
 # TRANING PARAMETERS
-# DATE                = '2026-11-05'
-DATE                = datetime.today().strftime('%Y-%m-%d')
-EPOCHS_TO_SAVE      = [ 20 ]
+DATE                = '2026-11-10'
+# DATE                = datetime.today().strftime('%Y-%m-%d')
+EPOCHS_TO_SAVE      = [ 2 ]
 MINITER             = [ 1 ]
 MAXITER             = [ 10 ]
-TRAIN_DATASET_RATIO = [ 1.0 ]
+TRAIN_DATASET_RATIO = [ 0.05 ]
 
 # FISTA PARAMETER
 GAMMA_FISTA_UNTRAINED  = [ 1.5 ]
@@ -30,10 +30,11 @@ ALPHA_FISTA_UNTRAINED  = [ 0.7 ]
 PARAMS_FISTA_UNTRAINED = list( zip( GAMMA_FISTA_UNTRAINED, ALPHA_FISTA_UNTRAINED ) )
 
 # FISTA-LD PARAMETERS
-GAMMA  = [ 1.5 ]
-ALPHA  = [ 0.7 ]
-PARAMS = list( zip( GAMMA, ALPHA ) )
-FISTA_LD_LIST = list( product( PARAMS, TRAIN_DATASET_RATIO, EPOCHS_TO_SAVE, list( zip( MINITER, MAXITER ) ) ) )
+GAMMA    = [ 1.5 ]
+ALPHA    = [ 0.7 ]
+PARAMS   = list( zip( GAMMA, ALPHA ) )
+ABLATION = [ 'd', 'e', 'v', 'dev', 'theta', 'all' ]
+FISTA_LD_LIST = list( product( PARAMS, TRAIN_DATASET_RATIO, EPOCHS_TO_SAVE, list( zip( MINITER, MAXITER ) ), ABLATION ) )
 
 # DEEPOPT PARAMETER
 ALPHA_DEEPOPT = [ 0.5 ]
@@ -48,19 +49,20 @@ DATA_PATH = plot_path( TEST_MODE, DATASET, TEST_DATASET_RATIO, PROBLEM, DATE )
 if not os.path.exists(DATA_PATH):
     os.makedirs(DATA_PATH)
 
-######################### PLOTTING MEAN (F-F*)/F* ##################################
+######################### PLOTTING MEDIAN (F-F*)/F* ##################################
 #### LOADING F DATA
 F_dicts = pm.load_data( 'Fhist', TEST_MODE, DATASET, TEST_DATASET_RATIO, PROBLEM, DATE,
                         PARAMS_FISTA_UNTRAINED, FISTA_LD_LIST, DEEPOPT_LIST )
-#### COMPUTING MEAN (F-F*)/F*
-mean_rel_opt_gap_dicts = pm.compute_mean_rel_opt_gap( F_dicts )
+#### COMPUTING MEDIAN (F-F*)/F*
+median_rel_opt_gap_dicts = pm.compute_median_rel_opt_gap( F_dicts )
 #### STACKING O(1/k**2)
-iters = mean_rel_opt_gap_dicts[0].get('data').shape[0]
-mean_rel_opt_gap_dicts = [ dict( data = 6000/(1 + np.arange(iters))**2, label = '$O(1/k^2)$', ls = ':', c = 'k' ) ] + mean_rel_opt_gap_dicts
+iters = median_rel_opt_gap_dicts[0].get('data').shape[0]
+mean_rel_opt_gap_dicts = [ dict( data = 6000/(1 + np.arange(iters))**2, lower_data = 6000/(1 + np.arange(iters))**2,
+                                 upper_data = 6000/(1 + np.arange(iters))**2, label = '$O(1/k^2)$', ls = ':', c = 'k' ) ] + median_rel_opt_gap_dicts
 #### STACKING THE X-COORDINATE
-mean_rel_opt_gap_dicts = [ dict( data = 1 + np.arange(iters), label = '$k+1$', ls = None, c = None ) ] + mean_rel_opt_gap_dicts
+median_rel_opt_gap_dicts = [ dict( data = 1 + np.arange(iters), label = '$k+1$', ls = None, c = None ) ] + median_rel_opt_gap_dicts
 #### PLOTTING
-optgap_fig = pm.plot_data( mean_rel_opt_gap_dicts,
+optgap_fig = pm.plot_data_with_width( median_rel_opt_gap_dicts,
                            ylabel = r'$\mean_b\left(\frac{F_b(x_{b,k})-F_b^*}{F_b^*}\right)$',
                            fig_path = DATA_PATH, fig_name = 'optgap' )
 #### ADDING MARKS AT THE X-AXIS WHERE THE PROXIMAL OPERATOR SOLVER STARTS TO FAIL
@@ -87,6 +89,21 @@ if len(FISTA_LD_LIST) > 0 or len(DEEPOPT_LIST) > 0:
 ######################### PLOTTING EXTRA INFORMATION ##################################
 if not os.path.exists(os.path.join( DATA_PATH, 'extra' )):
     os.makedirs(os.path.join( DATA_PATH, 'extra' ))
+
+######################### PLOTTING MEAN STEPSIZE ##################################
+#### LOADING STEPSIZE DATA
+stepsize_dicts = pm.load_data( 'stepsize_hist', TEST_MODE, DATASET, TEST_DATASET_RATIO, PROBLEM, DATE,
+                                PARAMS_FISTA_UNTRAINED, FISTA_LD_LIST, DEEPOPT_LIST )
+if len(stepsize_dicts) > 0:
+    #### COMPUTING MEAN STEPSIZE (currently all stepsizes in the batch are the same)
+    stepsize_mean_dicts = pm.compute_mean( stepsize_dicts )
+    #### STACKING THE X-COORDINATE
+    iters = stepsize_mean_dicts[0].get('data').shape[0]
+    stepsize_mean_dicts = [ dict( data = 1 + np.arange(iters), label = '$k+1$', ls = None, c = None ) ] + stepsize_mean_dicts
+    #### PLOTTING
+    pm.plot_data( stepsize_mean_dicts,
+                ylabel = r'$\rho_k$',
+                fig_path = os.path.join( DATA_PATH, 'extra' ), fig_name = 'stepsize' )
 
 ######################### PLOTTING MEAN EPS ##################################
 #### LOADING EPS DATA

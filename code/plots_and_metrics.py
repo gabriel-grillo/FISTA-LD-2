@@ -28,10 +28,10 @@ def get_label( algorithm, list_of_parameters ):
         gamma, alpha = list_of_parameters
         label = f'FISTA: $\\gamma={gamma:.2e}$, $\\alpha={alpha:.2e}$'
     elif algorithm == 'fista-ld':
-        train_dataset_ratio, miniter, maxiter, gamma, alpha, epochs = list_of_parameters
+        train_dataset_ratio, miniter, maxiter, gamma, alpha, ablation, epochs = list_of_parameters
         label = rf'FISTA-LD: N=[{miniter},{maxiter}], '
         label += f'$\\gamma={gamma:.2e}$, $\\alpha={alpha:.2e}$, '
-        label += f'train data={train_dataset_ratio}, epochs={epochs}'
+        label += f'train data={train_dataset_ratio}, epochs={epochs}, ablation={ablation}'
     elif algorithm == 'deepopt':
         train_dataset_ratio, miniter, maxiter, alpha, epochs = list_of_parameters
         label = f'DeepOpt: N=[{miniter},{maxiter}], $\\alpha$={alpha:.2f}, '
@@ -42,7 +42,7 @@ def get_label( algorithm, list_of_parameters ):
 
 def load_data( data_name, test_mode, dataset, test_dataset_ratio, problem, date, fista_list, fista_ld_list, deepopt_list ):
     dicts_list = []
-    if data_name in ['Fhist', 'flag_hist', 'inner_iter_hist', 'eps_hist']:
+    if data_name in ['Fhist', 'flag_hist', 'inner_iter_hist', 'eps_hist', 'stepsize_hist']:
         ##### ISTA RESULTS
         hist_path_ista = hist_path( 'ista', [ test_mode, dataset, test_dataset_ratio, problem ] )
         dicts_list.append(
@@ -67,15 +67,15 @@ def load_data( data_name, test_mode, dataset, test_dataset_ratio, problem, date,
             )
     #### FISTA-LD RESULTS
     for i,options in enumerate(fista_ld_list):
-        params, train_dataset_ratio, epochs, minmaxiter = options
+        params, train_dataset_ratio, epochs, minmaxiter, ablation = options
         gamma, alpha = params
         miniter, maxiter = minmaxiter
         hist_path_fista_ld = hist_path( 'fista-ld', [ test_mode, dataset, train_dataset_ratio, test_dataset_ratio, 
-                                                      problem, miniter, maxiter, gamma, alpha, date, epochs ] )
+                                                      problem, miniter, maxiter, gamma, alpha, date, ablation, epochs ] )
         dicts_list.append(
             dict(
                 data  = np.load( os.path.join( hist_path_fista_ld, data_name + '.npy') ),
-                label = get_label( 'fista-ld', [ train_dataset_ratio, miniter, maxiter, gamma, alpha, epochs ] ),
+                label = get_label( 'fista-ld', [ train_dataset_ratio, miniter, maxiter, gamma, alpha, ablation, epochs ] ),
                 ls    = '-',
                 c     = COLORS[i%len(COLORS)]
             )
@@ -142,6 +142,41 @@ def compute_mean( dicts_list, axis = 0 ):
         d.update( { 'data':np.mean(dicts_list[i].get('data'),axis=axis) } )
     return mean_dicts_list
 
+def compute_median_rel_opt_gap( F_dicts ):
+    #### COPYING DICTIONARIES
+    median_rel_opt_gap_dicts = [ d.copy() for d in F_dicts ]
+    #### COMPUTING F*
+    F_hist = np.stack( [ d.get('data') for d in F_dicts ] )
+    F_opt = np.min( np.min( F_hist , axis = 2 ), axis = 0 )
+    F_opt = F_opt[:,None]
+    #### COMPUTING (F-F*)/F*
+    rel_opt_gap = ( F_hist - F_opt ) / F_opt
+    #### COMPUTING MEDIAN (F-F*)/F* OVER PROBLEMS
+    q25, med, q75 = np.quantile( rel_opt_gap, [0.25, 0.5, 0.75], axis = 1 )
+    #### CHANGING F BY (F-F*)/F*
+    for i,d in enumerate(median_rel_opt_gap_dicts):
+        d.update( { 'data':med[i] } )
+        d['upper_data'] = q75[i]
+        d['lower_data'] = q25[i]
+    return median_rel_opt_gap_dicts
+
+def plot_data_with_width( dicts_list, ylabel, fig_path, fig_name, xscale = 'log', yscale = 'log' ):
+    x = dicts_list[0]
+    for y in dicts_list[1:]:
+        pp.plot( x.get('data'), y.get('data'), label = y.get('label'), ls = y.get('ls'), c = y.get('c') )
+        pp.fill_between( x.get('data'), y.get('lower_data'), y.get('upper_data'), color = y.get('c'), alpha = 0.2, linewidth = 0 )
+    pp.xscale( xscale )
+    pp.yscale( yscale )
+    pp.xlabel( x.get('label') )
+    pp.ylabel( ylabel )
+    pp.grid()
+    pp.legend( loc = 'center left', bbox_to_anchor = ( 1, 0.5 ) )
+    pp.savefig( os.path.join( fig_path, fig_name + EXTENSION ) )
+    fig = pp.gcf()
+    pp.close()
+    save_data( dicts_list, data_path = fig_path, data_name = fig_name )
+    return fig
+
 def compute_mean_rel_opt_gap( F_dicts ):
     #### COPYING DICTIONARIES
     mean_rel_opt_gap_dicts = [ d.copy() for d in F_dicts ]
@@ -172,16 +207,16 @@ def compute_metrics( test_mode, dataset, test_dataset_ratio, problem, date, fist
     F_opt_train = np.min( F_train_hist, axis = 1 )[:,None]
     #### FISTA-LD RESULTS
     for options in fista_ld_list:
-        params, train_dataset_ratio, epochs, minmaxiter = options
+        params, train_dataset_ratio, epochs, minmaxiter, ablation = options
         gamma, alpha = params
         miniter, maxiter = minmaxiter
         hist_path_fista_ld = hist_path( 'fista-ld', [ test_mode, dataset, train_dataset_ratio, test_dataset_ratio, 
-                                                      problem, miniter, maxiter, gamma, alpha, date, epochs ] )
+                                                      problem, miniter, maxiter, gamma, alpha, date, ablation, epochs ] )
         hist = np.load( os.path.join( hist_path_fista_ld, 'Fhist.npy') )
         val_loss_list.append( np.mean( ( hist[:,miniter:maxiter+1] - F_opt_train ) / ( F_train_hist[:,miniter:maxiter+1] - F_opt_train ) ) )
         penalty_max_iters = min( F_train_hist.shape[1], hist.shape[1] )
         penalty_list.append( np.mean( np.maximum( (hist[:,maxiter+1:penalty_max_iters] - F_train_hist[:,maxiter+1:penalty_max_iters])/F_train_hist[:,maxiter+1:penalty_max_iters], 0.0 ) ) )
-        label_list.append( get_label( 'fista-ld', [ train_dataset_ratio, miniter, maxiter, gamma, alpha, epochs ] ) )
+        label_list.append( get_label( 'fista-ld', [ train_dataset_ratio, miniter, maxiter, gamma, alpha, ablation, epochs ] ) )
     #### DEEPOPT RESULTS
     for options in deepopt_list:
         alpha, train_dataset_ratio, epochs, minmaxiter = options
