@@ -1,6 +1,9 @@
 import tensorflow as tf
 from math import inf
 
+ATOL = 10 * tf.experimental.numpy.finfo(tf.float32).eps
+RTOL = 10 * tf.experimental.numpy.finfo(tf.float32).eps
+
 def reduce_TV( u ):
     return tf.reduce_sum( tf.math.abs( u ), axis = [1,2,3,4] )
 
@@ -8,7 +11,7 @@ def dual_projection( u ):
     return u / tf.math.maximum( tf.math.abs(u), 1.0 )
 
 class proxTV():
-    def __init__(self, D, D_transp, D_norm, lam, lower = -inf, upper = inf, MAXITER = 10):
+    def __init__(self, D, D_transp, D_norm, lam, lower = -inf, upper = inf, MAXITER = 150):
         self.D = D
         self.D_transp = D_transp
         self.D_norm_sq = D_norm ** 2
@@ -39,12 +42,16 @@ class proxTV():
         t_next = tf.constant( 1, dtype = tf.float32, name = 'proxTV_t' )
         x = tf.zeros_like( z, name = 'proxTV_x' ) #just to set the shape
         v = self.u
+        w = self.u
 
         # Dual stepsize
         beta = 1 / ( rho * self.D_norm_sq )
 
         # Flag to indicate whether the stopping criterion have been met (for each batch item)
         flag = tf.zeros( tf.shape(self.dual_gap), dtype = tf.bool, name = 'flag' )
+
+        # Mask for the indices to update: only where the stopping criterion have not yet been met
+        mask = tf.where( flag[:,tf.newaxis,tf.newaxis,tf.newaxis,tf.newaxis], tf.zeros_like( self.u ), tf.ones_like( self.u ) )
 
         # Iteration counter for each batch item
         iter_batch = tf.zeros( tf.shape(self.dual_gap), dtype = tf.int32, name = 'iter_batch' )
@@ -61,8 +68,11 @@ class proxTV():
             # t update
             t = t_next
 
+            # Mask for the indices to update
+            mask = tf.where( flag[:,tf.newaxis,tf.newaxis,tf.newaxis,tf.newaxis], tf.zeros_like( self.u ), tf.ones_like( self.u ) )
+
             # Convex combination of feasible dual points
-            w = ( 1 - 1 / t ) * u_prev + ( 1 / t ) * v_prev
+            w = mask * ( ( 1 - 1 / t ) * u_prev + ( 1 / t ) * v_prev ) + ( 1 - mask ) * w
 
             # Current primal approximation
             D_transp_w = self.D_transp( w )
@@ -75,13 +85,10 @@ class proxTV():
             self.dual_gap = self.lam * reduce_TV( grad ) - tf.reduce_sum( x * D_transp_w, axis = [1,2,3] )
 
             # Stopping criterion flag for each batch item
-            flag = tf.math.less( self.dual_gap, eps )
-
-            # Mask for the indices to update: only where the stopping criterion have not yet been met
-            mask = tf.where( flag[:,tf.newaxis,tf.newaxis,tf.newaxis,tf.newaxis], tf.zeros_like( self.u ), tf.ones_like( self.u ) )
+            flag = tf.math.less( self.dual_gap, eps + ATOL + RTOL * tf.maximum( self.dual_gap, eps ) )
         
             # Update current iteration towards gradient direction
-            self.u = w + beta * mask * grad
+            self.u = w + beta * grad
         
             # Project into feasible dual set (proximal operator of the indicator function)
             self.u = self.lam * dual_projection( self.u / self.lam )

@@ -9,7 +9,7 @@ pp.rcParams[ 'savefig.bbox' ] = 'tight'
 
 from operators import reconstruction_operators, torch_linear_op_as_tf2_layer, wavelet_as_tf2_layer
 from data import get_dataset, get_observed_data
-from optimization import fista, ista, fista_ld, deepopt_nonsmooth
+from optimization import fista, ista, fista_dev, deepopt_nonsmooth
 from paths import model_path, hist_path
 
 RANDOM_SEED = 42
@@ -43,12 +43,9 @@ def problem_definition( dataset, mode, problem, batch_size, dataset_ratio ):
     
     if mode == 'train':
         ###### REFERENCE FUNCTIONAL VALUES FOR TRAINING
-        gamma_FISTA   = 1.5
-        alpha_FISTA   = 0.7
-        if problem == 'lstv':
-            maxiter_FISTA = 200
-        else:
-            maxiter_FISTA = 400
+        gamma_FISTA   = 2.0
+        alpha_FISTA   = 0.75
+        maxiter_FISTA = 500
         @tf.function
         def F_ref( b ):
             # Initial point
@@ -165,16 +162,16 @@ def network_base_arch( input_list, name ):
 
     return keras.Model( inputs = input_list, outputs = result, name = name )
 
-def train_fista_ld( dataset, problem, miniter, maxiter, gamma, alpha,
-                    epochs, batch_size, date, load_saved_models, ablation,
+def train_fista_dev( dataset, problem, miniter, maxiter, gamma, alpha,
+                    epochs, batch_size, date, load_saved_models, ablation, t_variant,
                     dataset_ratio = 1.0, epochs_to_save = [] ):
     ######################### PROBLEM'S DEFINITION ##################################
     ds_train, A, A_adj, A_norm, W, W_adj, W_norm, lam, x_shape = \
         problem_definition( dataset, 'train', problem, batch_size, dataset_ratio )
 
     ######################### MODELS' PATH ##################################
-    MODEL_PATH = model_path( 'fista-ld',
-                             [dataset, dataset_ratio, problem, miniter, maxiter, gamma, alpha, date, ablation],
+    MODEL_PATH = model_path( 'fista-dev',
+                             [dataset, dataset_ratio, problem, miniter, maxiter, gamma, alpha, date, ablation, t_variant],
                              load_saved_models,
                              training = True )
 
@@ -271,9 +268,9 @@ def train_fista_ld( dataset, problem, miniter, maxiter, gamma, alpha,
             n_iter_train = tf.random.uniform( shape = [],  minval = miniter, maxval = maxiter + 10 + 1, \
                                               dtype = tf.int32, name = 'maxiter', seed = RANDOM_SEED )
         with tf.GradientTape() as tape:
-            _, F, _ = fista_ld( problem, x0_train, A, A_adj, A_norm, b_train, W, W_adj, W_norm, lam,
+            _, F, _ = fista_dev( problem, x0_train, A, A_adj, A_norm, b_train, W, W_adj, W_norm, lam,
                                 d_model, e_model, v_model, theta,
-                                n_iter_train, maxiter, gamma, alpha,
+                                n_iter_train, maxiter, gamma, alpha, t_variant = t_variant,
                                 training = True, save_hist = False
                                 )
             loss = tf.reduce_mean( ( F - F_ref[:,-1] ) / ( F_ref[:,n_iter_train] - F_ref[:,-1] ) )
@@ -433,7 +430,7 @@ def test_loop( test_step, ds, batch_size, result_path, filenames ):
         with open( file_path, 'wb' ) as f:
             np.save( f, np.concatenate( [ h[i] for h in hist_list  ], axis = 0 ) )
 
-def test_untrained( dataset, problem, mode, algorithm, batch_size, iters, gamma = None, alpha = None, dataset_ratio = 1.0 ):
+def test_untrained( dataset, problem, mode, algorithm, batch_size, iters, gamma = None, alpha = None, t_variant = None, dataset_ratio = 1.0 ):
     assert algorithm == 'fista' or algorithm == 'ista', 'Unimplemented algorithm: ' + algorithm
     ######################### PROBLEM'S DEFINITION ##################################
     ds, A, A_adj, A_norm, W, W_adj, W_norm, lam, x_shape = \
@@ -441,7 +438,7 @@ def test_untrained( dataset, problem, mode, algorithm, batch_size, iters, gamma 
 
     ######################### RESULTS' PATH ##################################
     if algorithm == 'fista':
-        RESULT_PATH = hist_path( 'fista', [ mode, dataset, dataset_ratio, problem, gamma, alpha ] )
+        RESULT_PATH = hist_path( 'fista', [ mode, dataset, dataset_ratio, problem, gamma, alpha, t_variant ] )
     else:
         RESULT_PATH = hist_path( 'ista', [ mode, dataset, dataset_ratio, problem ] )
 
@@ -458,7 +455,7 @@ def test_untrained( dataset, problem, mode, algorithm, batch_size, iters, gamma 
             # Number of iterations
             n_iter = tf.constant( iters, dtype = tf.int32, name = 'maxiter' )
             x, _, hist = fista( problem, x0, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
-                                n_iter, gamma, alpha,
+                                n_iter, gamma, alpha, t_variant = t_variant,
                                 save_hist = True
                                )
             return x, hist
@@ -478,17 +475,17 @@ def test_untrained( dataset, problem, mode, algorithm, batch_size, iters, gamma 
     test_loop( test_step, ds, batch_size, RESULT_PATH, FILENAMES )
 
 
-def test_fista_ld( dataset, problem, mode, miniter, maxiter, gamma, alpha,
-                   epochs, batch_size, iters, date, ablation, dataset_ratio = (1.0,1.0) ):
+def test_fista_dev( dataset, problem, mode, miniter, maxiter, gamma, alpha,
+                   epochs, batch_size, iters, date, ablation, t_variant, dataset_ratio = (1.0,1.0) ):
     ######################### PROBLEM'S DEFINITION ##################################
     train_dataset_ratio, test_dataset_ratio = dataset_ratio
     ds, A, A_adj, A_norm, W, W_adj, W_norm, lam, x_shape = \
             problem_definition( dataset, mode, problem, batch_size, test_dataset_ratio )
 
     ######################### RESULTS' PATH ##################################
-    RESULT_PATH = hist_path( 'fista-ld',
+    RESULT_PATH = hist_path( 'fista-dev',
                              [ mode, dataset, train_dataset_ratio, test_dataset_ratio,
-                               problem, miniter, maxiter, gamma, alpha, date, ablation, epochs ] )
+                               problem, miniter, maxiter, gamma, alpha, date, ablation, t_variant, epochs ] )
     
     FILENAMES = [
         'Fhist.npy', 'eps_hist.npy', 'd_hist.npy', 'd_ub_hist.npy',
@@ -498,8 +495,8 @@ def test_fista_ld( dataset, problem, mode, miniter, maxiter, gamma, alpha,
 
     ######################### TEST STEP ##################################
     ##### MODELS' PATH
-    MODEL_PATH = model_path( 'fista-ld',
-                             [dataset, train_dataset_ratio, problem, miniter, maxiter, gamma, alpha, date, ablation],
+    MODEL_PATH = model_path( 'fista-dev',
+                             [dataset, train_dataset_ratio, problem, miniter, maxiter, gamma, alpha, date, ablation, t_variant],
                              load_saved_models = True,
                              training = False )
     ##### LOADING THE MODELS
@@ -533,9 +530,9 @@ def test_fista_ld( dataset, problem, mode, miniter, maxiter, gamma, alpha,
         x0  = tf.zeros( shape = (tf.shape(b)[0],) + x_shape, dtype = tf.float32, name = 'x0' )
         # Number of iterations
         n_iter = tf.constant( iters, dtype = tf.int32, name = 'maxiter' )
-        x, _, hist = fista_ld( problem, x0, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
+        x, _, hist = fista_dev( problem, x0, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
                                d_model, e_model, v_model, theta,
-                               n_iter, maxiter, gamma, alpha,
+                               n_iter, maxiter, gamma, alpha, t_variant = t_variant,
                                training = False, save_hist = True
                               )
         return x, hist

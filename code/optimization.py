@@ -117,7 +117,7 @@ def objective_function( problem, A, A_adj, A_norm, b, W, W_adj, W_norm, lam ):
         L = A_norm**2
         def g( x ):
             return lam * reduce_TV( W( x ) )
-        prox = proxTV( W, W_adj, W_norm, lam, lower = lower, upper = upper, MAXITER = 10 )
+        prox = proxTV( W, W_adj, W_norm, lam, lower = lower, upper = upper )
         def proj_C( x ):
             if lower > -inf:
                 x = tf.math.maximum( x, lower )
@@ -143,12 +143,12 @@ def computeR( problem, x0, A, A_adj, A_norm, b, W, W_adj, W_norm, lam ):
     return R
 
 
-########################## FISTA with Learned Deviations ##########################
-def fista_ld( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
-              d_model, e_model, v_model, theta,
-              MAXITER, MAXITER_DEVS, gamma, alpha, mu = 0.99,
-              training = False, save_hist = True
-             ):
+########################## FISTA with learned DEViations and stepsizes ##########################
+def fista_dev( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
+               d_model, e_model, v_model, theta,
+               MAXITER, MAXITER_DEVS, gamma, alpha, mu = 0.99, t_variant = 1,
+               training = False, save_hist = True
+              ):
     
     # axis=0(batch), axes=1,2(2d image), axis=3(channels)
     batch_size = tf.shape(x)[0]
@@ -248,7 +248,7 @@ def fista_ld( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
         # e deviation
         e_norm_upper_bound = R0 / tf.cast( i, dtype = tf.float32 ) ** gamma
         e_norm_upper_bound /= t
-        if tf.less(i, MAXITER_DEVS):
+        if tf.less_equal(i, MAXITER_DEVS):
             e = e_model( [ y, ( y - x_tilde ) / current_rho, d, e ], training = training )
             e = safely_normalize( e, e_norm_upper_bound[:,tf.newaxis,tf.newaxis,tf.newaxis] )
         else:
@@ -260,7 +260,7 @@ def fista_ld( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
         if tf.less( i, MAXITER ):
             # v deviation
             v_norm_upper_bound = R0 / tf.cast( i, dtype = tf.float32 ) ** gamma
-            if tf.less(i, MAXITER_DEVS):
+            if tf.less_equal(i, MAXITER_DEVS):
                 v = v_model( [ x, x - x_prev, d, e, v ], training = training )
                 v = safely_normalize( v, v_norm_upper_bound[:,tf.newaxis,tf.newaxis,tf.newaxis] )
             else:
@@ -276,7 +276,10 @@ def fista_ld( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
             next_rho = rho_min + (rho_max - rho_min) * tf.math.sigmoid( theta[i] - theta_center )
         else:
             next_rho = rho_theory
-        t = tf.math.maximum( 1.0, ( 1 - alpha ) / 2 + tf.sqrt( current_rho / next_rho ) * t )
+        if t_variant == 1:
+            t = tf.math.maximum( 1.0, ( (1-alpha) + tf.sqrt( (1-alpha)**2 + 4 * (current_rho / next_rho) * t**2 ) ) / 2 )
+        else:
+            t = tf.math.maximum( 1.0, ( 1 - alpha ) / 2 + tf.sqrt( current_rho / next_rho ) * t )
         
         ## Saves history
         if save_hist:
@@ -303,7 +306,7 @@ def fista_ld( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
     
 ########################## Baseline algorithms ##########################
 def fista( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
-           MAXITER, gamma, alpha, mu = 0.99,
+           MAXITER, gamma, alpha, mu = 0.99, t_variant=1,
            save_hist = True
           ):
     
@@ -336,6 +339,7 @@ def fista( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
         Fhist += tf.one_hot( i, MAXITER + 1 ) * tf.expand_dims( Fx, axis = 1 )
     else:
         Fhist           = []
+        eps_hist        = []
         flag_hist       = []
         inner_iter_hist = []
         rho_hist        = []
@@ -370,7 +374,10 @@ def fista( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
         z = proj_C( x + ( t - 1 ) * ( x - x_prev ) )
 
         ## t update (constant step-size)
-        t += (1-alpha)/2
+        if t_variant == 1:
+            t = tf.math.maximum( 1.0, ( (1-alpha) + tf.sqrt( (1-alpha)**2 + 4 * t**2 ) ) / 2 )
+        else:
+            t += (1-alpha)/2
         
         ## Saves history
         if save_hist:
@@ -391,6 +398,8 @@ def fista( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
 def ista( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
           MAXITER, save_hist = True
          ):
+    PROX_TOL = tf.experimental.numpy.finfo(tf.float32).eps
+    
     # axis=0(batch), axes=1,2(2d image), axis=3(channels)
     batch_size = tf.shape(x)[0]
     
@@ -400,11 +409,11 @@ def ista( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
     # Initializations
     i = tf.constant(0, dtype=tf.int32, name = 'i')
     if save_hist:
-        Fhist           = tf.fill( [ batch_size, MAXITER + 1 ], 0.0, name = 'Fhist'           )
-        eps_hist        = tf.fill( [ batch_size, MAXITER     ], 0.0, name = 'eps_hist'        )
-        flag_hist       = tf.fill( [ batch_size, MAXITER     ],   0, name = 'flag_hist'       )
-        inner_iter_hist = tf.fill( [ batch_size, MAXITER     ],   0, name = 'inner_iter_hist' )
-        rho_hist        = tf.fill( [ batch_size, MAXITER     ], 0.0, name = 'rho_hist'        )
+        Fhist           = tf.fill( [ batch_size, MAXITER + 1 ],      0.0, name = 'Fhist'           )
+        eps_hist        = tf.fill( [ batch_size, MAXITER     ], PROX_TOL, name = 'eps_hist'        )
+        flag_hist       = tf.fill( [ batch_size, MAXITER     ],        0, name = 'flag_hist'       )
+        inner_iter_hist = tf.fill( [ batch_size, MAXITER     ],        0, name = 'inner_iter_hist' )
+        rho_hist        = tf.fill( [ batch_size, MAXITER     ],      0.0, name = 'rho_hist'        )
     else:
         Fhist           = []
         eps_hist        = []
@@ -425,7 +434,7 @@ def ista( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
             Fhist += tf.one_hot( i, MAXITER + 1 ) * tf.expand_dims( Fx, axis = 1 )
 
         # Proximal gradient step
-        x, flag, inner_iter = prox( x - (1/L) * grad, 1/L, tf.constant( 0.0, dtype = tf.float32 ) )
+        x, flag, inner_iter = prox( x - (1/L) * grad, 1/L, PROX_TOL ) # eps = machine precision
 
         ## Updates i for next iteration
         i += 1
@@ -452,6 +461,8 @@ def ista( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
 def deepopt_nonsmooth( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
                        dx1_model, dx2_model, theta, MAXITER, MAXITER_DEVS, alpha,
                        training = False, save_hist = True ):
+    PROX_TOL = tf.experimental.numpy.finfo(tf.float32).eps
+
     # axis=0(batch), axes=1,2(2d image), axis=3(channels)
     batch_size = tf.shape(x)[0]
     
@@ -533,7 +544,7 @@ def deepopt_nonsmooth( problem, x, A, A_adj, A_norm, b, W, W_adj, W_norm, lam,
         x -= gamma * grad
         x += (gamma / beta) * dx1
         x += dx2
-        x, flag, inner_iter = prox( x, gamma, tf.constant( 0.0, dtype = tf.float32 ) )
+        x, flag, inner_iter = prox( x, gamma, PROX_TOL ) # eps = machine precision
 
         ## Updates i for next iteration
         i += 1
